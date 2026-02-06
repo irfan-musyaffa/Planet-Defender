@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Planet Defender: Orbit Guardian</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050510;
+            color: white;
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .stat-box {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px);
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            margin-bottom: 10px;
+        }
+
+        #health-bar-container {
+            width: 200px;
+            height: 10px;
+            background: #333;
+            border-radius: 5px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+
+        #health-bar {
+            width: 100%;
+            height: 100%;
+            background: #00ffcc;
+            transition: width 0.3s;
+        }
+
+        #game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(10, 10, 30, 0.95);
+            padding: 40px;
+            border-radius: 20px;
+            border: 2px solid #00ffff;
+            text-align: center;
+            display: none;
+            z-index: 100;
+        }
+
+        .btn {
+            background: #00ffff;
+            color: #000;
+            border: none;
+            padding: 10px 30px;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div class="stat-box">
+            SKOR: <span id="score">0</span><br>
+            GELOMBANG: <span id="wave">1</span>
+        </div>
+        <div class="stat-box">
+            PLANET HEALTH
+            <div id="health-bar-container">
+                <div id="health-bar"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-over">
+        <h1 style="color: #ff3366">PLANET HANCUR!</h1>
+        <p>Pertahananmu jebol oleh meteor.</p>
+        <p>Skor Akhir: <span id="final-score">0</span></p>
+        <button class="btn" onclick="location.reload()">COBA LAGI</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const waveEl = document.getElementById('wave');
+        const healthBar = document.getElementById('health-bar');
+        const gameOverEl = document.getElementById('game-over');
+
+        let score = 0;
+        let wave = 1;
+        let health = 100;
+        let isGameOver = false;
+
+        const planet = { x: 0, y: 0, radius: 50 };
+        const defender = { angle: 0, distance: 100, size: 20 };
+        const bullets = [];
+        const enemies = [];
+        const particles = [];
+        const powerUps = [];
+
+        let lastShot = 0;
+        let shootDelay = 250;
+        let multiShot = 0; // Timer for powerup
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            planet.x = canvas.width / 2;
+            planet.y = canvas.height / 2;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Controls
+        let isPointerDown = false;
+        window.addEventListener('pointerdown', () => isPointerDown = true);
+        window.addEventListener('pointerup', () => isPointerDown = false);
+        window.addEventListener('pointermove', (e) => {
+            const dx = e.clientX - planet.x;
+            const dy = e.clientY - planet.y;
+            defender.angle = Math.atan2(dy, dx);
+        });
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x, y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6,
+                    life: 1,
+                    color
+                });
+            }
+        }
+
+        function spawnEnemy() {
+            if (isGameOver) return;
+            const angle = Math.random() * Math.PI * 2;
+            const dist = Math.max(canvas.width, canvas.height);
+            enemies.push({
+                x: planet.x + Math.cos(angle) * dist,
+                y: planet.y + Math.sin(angle) * dist,
+                speed: 1 + (wave * 0.2),
+                size: 15 + Math.random() * 20,
+                health: Math.ceil(wave / 2)
+            });
+        }
+
+        function update() {
+            if (isGameOver) return;
+
+            // Auto shoot
+            const now = Date.now();
+            if (isPointerDown && now - lastShot > shootDelay) {
+                const bx = planet.x + Math.cos(defender.angle) * defender.distance;
+                const by = planet.y + Math.sin(defender.angle) * defender.distance;
+                
+                if (multiShot > 0) {
+                    // Triple shot
+                    for(let i = -0.2; i <= 0.2; i += 0.2) {
+                        bullets.push({ x: bx, y: by, angle: defender.angle + i, speed: 8 });
+                    }
+                } else {
+                    bullets.push({ x: bx, y: by, angle: defender.angle, speed: 8 });
+                }
+                lastShot = now;
+            }
+
+            if (multiShot > 0) multiShot -= 16; // Approx frame time
+
+            // Update Bullets
+            bullets.forEach((b, i) => {
+                b.x += Math.cos(b.angle) * b.speed;
+                b.y += Math.sin(b.angle) * b.speed;
+                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) bullets.splice(i, 1);
+            });
+
+            // Update Enemies
+            enemies.forEach((e, ei) => {
+                const dx = planet.x - e.x;
+                const dy = planet.y - e.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                e.x += (dx / dist) * e.speed;
+                e.y += (dy / dist) * e.speed;
+
+                // Hit Planet
+                if (dist < planet.radius + e.size/2) {
+                    health -= 10;
+                    healthBar.style.width = health + '%';
+                    createExplosion(e.x, e.y, '#ff3366');
+                    enemies.splice(ei, 1);
+                    if (health <= 0) endGame();
+                }
+
+                // Hit Bullet
+                bullets.forEach((b, bi) => {
+                    const bdx = e.x - b.x;
+                    const bdy = e.y - b.y;
+                    const bdist = Math.sqrt(bdx * bdx + bdy * bdy);
+                    if (bdist < e.size) {
+                        e.health--;
+                        bullets.splice(bi, 1);
+                        if (e.health <= 0) {
+                            score += 10;
+                            scoreEl.innerText = score;
+                            createExplosion(e.x, e.y, '#aaa');
+                            if (Math.random() > 0.9) powerUps.push({x: e.x, y: e.y, type: 'triple'});
+                            enemies.splice(ei, 1);
+                            if (score % 200 === 0) {
+                                wave++;
+                                waveEl.innerText = wave;
+                            }
+                        }
+                    }
+                });
+            });
+
+            // Update PowerUps
+            powerUps.forEach((p, pi) => {
+                const ddx = (planet.x + Math.cos(defender.angle) * defender.distance) - p.x;
+                const ddy = (planet.y + Math.sin(defender.angle) * defender.distance) - p.y;
+                if (Math.sqrt(ddx*ddx + ddy*ddy) < 30) {
+                    multiShot = 5000; // 5 seconds
+                    powerUps.splice(pi, 1);
+                }
+            });
+
+            // Particles
+            particles.forEach((p, i) => {
+                p.x += p.vx; p.y += p.vy;
+                p.life -= 0.02;
+                if (p.life <= 0) particles.splice(i, 1);
+            });
+        }
+
+        function draw() {
+            ctx.fillStyle = '#050510';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Stars background
+            ctx.fillStyle = '#fff';
+            for(let i=0; i<50; i++) {
+                ctx.globalAlpha = Math.random();
+                ctx.fillRect(Math.random()*canvas.width, Math.random()*canvas.height, 1, 1);
+            }
+            ctx.globalAlpha = 1;
+
+            // Planet
+            const grad = ctx.createRadialGradient(planet.x, planet.y, 10, planet.x, planet.y, planet.radius);
+            grad.addColorStop(0, '#00ffcc');
+            grad.addColorStop(1, '#0066ff');
+            ctx.shadowBlur = 20; ctx.shadowColor = '#0066ff';
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(planet.x, planet.y, planet.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Defender
+            ctx.save();
+            ctx.translate(planet.x, planet.y);
+            ctx.rotate(defender.angle);
+            ctx.shadowBlur = 15; ctx.shadowColor = '#00ffff';
+            ctx.fillStyle = '#00ffff';
+            ctx.beginPath();
+            ctx.moveTo(defender.distance - 10, -10);
+            ctx.lineTo(defender.distance + 15, 0);
+            ctx.lineTo(defender.distance - 10, 10);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+
+            // Bullets
+            ctx.shadowBlur = 10; ctx.shadowColor = '#00ffff';
+            ctx.fillStyle = '#00ffff';
+            bullets.forEach(b => {
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Enemies
+            enemies.forEach(e => {
+                ctx.shadowBlur = 10; ctx.shadowColor = '#ff3366';
+                ctx.fillStyle = '#444';
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.size/2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#ff3366';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            });
+
+            // PowerUps
+            powerUps.forEach(p => {
+                ctx.fillStyle = '#ffff00';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Particles
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, 2, 2);
+            });
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
+        }
+
+        function endGame() {
+            isGameOver = true;
+            document.getElementById('final-score').innerText = score;
+            gameOverEl.style.display = 'block';
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        setInterval(spawnEnemy, 1500);
+        loop();
+    </script>
+</body>
+</html>
